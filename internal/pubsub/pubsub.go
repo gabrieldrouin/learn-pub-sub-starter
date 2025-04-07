@@ -7,6 +7,13 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
+type SimpleQueueType int
+
+const (
+	SimpleQueueDurable SimpleQueueType = iota
+	SimpleQueueTransient
+)
+
 func PublishJSON[T any](ch *amqp.Channel, exchange, key string, val T) error {
 	dat, err := json.Marshal(val)
 	if err != nil {
@@ -23,7 +30,7 @@ func DeclareAndBind(
 	exchange,
 	queueName,
 	key string,
-	simpleQueueType int, // an enum to represent "durable" or "transient"
+	simpleQueueType SimpleQueueType,
 ) (*amqp.Channel, amqp.Queue, error) {
 	ch, err := conn.Channel()
 	if err != nil {

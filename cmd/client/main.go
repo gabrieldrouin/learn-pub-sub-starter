@@ -28,7 +28,7 @@ func main() {
 		routing.ExchangePerilDirect,
 		routing.PauseKey+"."+username,
 		routing.PauseKey,
-		1,
+		pubsub.SimpleQueueTransient,
 	)
 	if err != nil {
 		log.Fatalf("could not declare and bind: %v", err)
