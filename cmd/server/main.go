@@ -37,6 +37,18 @@ func main() {
 	}
 	fmt.Printf("Queue %v declared and bound!\n", queue.Name)
 
+	err = pubsub.SubscribeGob(
+		conn,
+		routing.ExchangePerilTopic,
+		routing.GameLogSlug,
+		routing.GameLogSlug+".*",
+		pubsub.SimpleQueueDurable,
+		handlerLogs(),
+	)
+	if err != nil {
+		log.Fatalf("could not starting consuming logs: %v", err)
+	}
+
 	gamelogic.PrintServerHelp()
 
 	for {
@@ -77,5 +89,18 @@ func main() {
 		default:
 			fmt.Println("unknown command")
 		}
+	}
+}
+
+func handlerLogs() func(gamelog routing.GameLog) pubsub.Acktype {
+	return func(gamelog routing.GameLog) pubsub.Acktype {
+		defer fmt.Print("> ")
+
+		err := gamelogic.WriteLog(gamelog)
+		if err != nil {
+			fmt.Printf("error writing log: %v\n", err)
+			return pubsub.NackRequeue
+		}
+		return pubsub.Ack
 	}
 }

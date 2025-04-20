@@ -55,42 +55,95 @@ func SubscribeJSON[T any](
 	simpleQueueType SimpleQueueType,
 	handler func(T) Acktype,
 ) error {
-	ch, _, err := DeclareAndBind(conn, exchange, queueName, key, simpleQueueType)
+	return subscribe(
+		conn,
+		exchange,
+		queueName,
+		key,
+		simpleQueueType,
+		handler,
+		func(data []byte) (T, error) {
+			var target T
+			err := json.Unmarshal(data, &target)
+			return target, err
+		},
+	)
+}
+
+func SubscribeGob[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	simpleQueueType SimpleQueueType,
+	handler func(T) Acktype,
+) error {
+	return subscribe(
+		conn,
+		exchange,
+		queueName,
+		key,
+		simpleQueueType,
+		handler,
+		func(data []byte) (T, error) {
+			buffer := bytes.NewBuffer(data)
+			decoder := gob.NewDecoder(buffer)
+			var target T
+			err := decoder.Decode(&target)
+			return target, err
+		},
+	)
+}
+
+func subscribe[T any](
+	conn *amqp.Connection,
+	exchange,
+	queueName,
+	key string,
+	simpleQueueType SimpleQueueType,
+	handler func(T) Acktype,
+	unmarshaller func([]byte) (T, error),
+) error {
+	ch, queue, err := DeclareAndBind(conn, exchange, queueName, key, simpleQueueType)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not declare and bind queue: %v", err)
 	}
-	dels, err := ch.Consume(queueName, "", false, false, false, false, nil)
+
+	err = ch.Qos(10, 0, false)
 	if err != nil {
-		return err
+		return fmt.Errorf("could not set QoS: %v", err)
 	}
-	go func() error {
-		for del := range dels {
-			var msg T
-			if err := json.Unmarshal(del.Body, &msg); err != nil {
-				fmt.Printf("Error unmarshaling message: %v\n", err)
+
+	msgs, err := ch.Consume(
+		queue.Name, // queue
+		"",         // consumer
+		false,      // auto-ack
+		false,      // exclusive
+		false,      // no-local
+		false,      // no-wait
+		nil,        // args
+	)
+	if err != nil {
+		return fmt.Errorf("could not consume messages: %v", err)
+	}
+
+	go func() {
+		defer ch.Close()
+		for msg := range msgs {
+			target, err := unmarshaller(msg.Body)
+			if err != nil {
+				fmt.Printf("could not unmarshal message: %v\n", err)
 				continue
 			}
-			ack := handler(msg)
-			switch ack {
+			switch handler(target) {
 			case Ack:
-				if err := del.Ack(false); err != nil {
-					fmt.Printf("error acknowleding message: %v\n", err)
-				}
-				fmt.Println("Ack")
-			case NackRequeue:
-				if err := del.Nack(false, true); err != nil {
-					fmt.Printf("error acknowleding message: %v\n", err)
-				}
-				fmt.Println("NackRequeue")
+				msg.Ack(false)
 			case NackDiscard:
-				if err := del.Nack(false, false); err != nil {
-					fmt.Printf("error acknowleding message: %v\n", err)
-				}
-				fmt.Println("NackDiscard")
+				msg.Nack(false, false)
+			case NackRequeue:
+				msg.Nack(false, true)
 			}
-
 		}
-		return nil
 	}()
 	return nil
 }
